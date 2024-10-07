@@ -12,9 +12,11 @@ if (urlsToScrape.length === 0) {
     process.exit(1);
 }
 
-// Filepath for storing the JSON data locally
+// Filepaths for storing the JSON data locally
 const localApiDataFilePath = path.join(__dirname, 'playersData.json');
+const availablePlayersFilePath = path.join(__dirname, 'availablePlayers.json');
 const apiUrl = 'https://api.sleeper.app/v1/players/nfl';
+const leagueRostersUrl = 'https://api.sleeper.app/v1/league/1049003724397465600/rosters';
 
 // Function to check if the local JSON file is populated
 const checkLocalApiDataFile = () => {
@@ -50,6 +52,30 @@ const getLocalApiData = () => {
     } catch (error) {
         console.error(`Error reading local API data: ${error.message}`);
     }
+};
+
+// Function to fetch roster data from the Sleeper API
+const fetchRosterData = async () => {
+    try {
+        const response = await axios.get(leagueRostersUrl);
+        return response.data;
+    } catch (error) {
+        console.error(`Error fetching roster data: ${error.message}`);
+    }
+};
+
+// Function to find available players not on any rosters
+const findAvailablePlayers = (allPlayers, rosteredPlayers) => {
+    const availablePlayers = {};
+
+    for (const playerId in allPlayers) {
+        // If the player ID is not on any roster, add it to availablePlayers
+        if (!rosteredPlayers.has(playerId)) {
+            availablePlayers[playerId] = allPlayers[playerId];
+        }
+    }
+
+    return availablePlayers;
 };
 
 // Function to scrape a single URL
@@ -117,6 +143,24 @@ const main = async () => {
             apiData = await fetchAndStoreApiData(); // Fetch from API and store locally if no file or empty file
         }
 
+        // Fetch the roster data
+        console.log('Fetching roster data...');
+        const rosterData = await fetchRosterData();
+        
+        // Gather all player IDs from the rosters
+        const rosteredPlayers = new Set();
+        rosterData.forEach(roster => {
+            roster.players.forEach(playerId => rosteredPlayers.add(playerId));
+        });
+
+        // Find available players not on any roster
+        const availablePlayers = findAvailablePlayers(apiData, rosteredPlayers);
+
+        // Save available players to a JSON file
+        fs.writeFileSync(availablePlayersFilePath, JSON.stringify(availablePlayers, null, 2), 'utf-8');
+        console.log('Available players data has been saved to availablePlayers.json.');
+
+        // Scrape provided URLs
         const allScrapedData = await scrapeAllWebsites(urlsToScrape);
 
         if (allScrapedData && allScrapedData.length > 0) {
