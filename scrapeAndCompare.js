@@ -1,6 +1,8 @@
 // Import required libraries
 const axios = require('axios');
 const cheerio = require('cheerio');
+const fs = require('fs');
+const path = require('path');
 
 // Get URLs from command line arguments
 const urlsToScrape = process.argv.slice(2);
@@ -9,6 +11,46 @@ if (urlsToScrape.length === 0) {
     console.log('Please provide at least one URL as an argument');
     process.exit(1);
 }
+
+// Filepath for storing the JSON data locally
+const localApiDataFilePath = path.join(__dirname, 'playersData.json');
+const apiUrl = 'https://api.sleeper.app/v1/players/nfl';
+
+// Function to check if the local JSON file is populated
+const checkLocalApiDataFile = () => {
+    try {
+        if (fs.existsSync(localApiDataFilePath)) {
+            const fileStats = fs.statSync(localApiDataFilePath);
+            return fileStats.size > 0; // Return true if the file is populated
+        }
+    } catch (error) {
+        console.error(`Error checking local file: ${error.message}`);
+    }
+    return false;
+};
+
+// Function to fetch the JSON data from the API and store it locally
+const fetchAndStoreApiData = async () => {
+    try {
+        const response = await axios.get(apiUrl);
+        const apiData = response.data;
+        fs.writeFileSync(localApiDataFilePath, JSON.stringify(apiData, null, 2), 'utf-8');
+        console.log('API data has been saved locally.');
+        return apiData;
+    } catch (error) {
+        console.error(`Error fetching API data: ${error.message}`);
+    }
+};
+
+// Function to retrieve the JSON data from the local file
+const getLocalApiData = () => {
+    try {
+        const rawData = fs.readFileSync(localApiDataFilePath, 'utf-8');
+        return JSON.parse(rawData);
+    } catch (error) {
+        console.error(`Error reading local API data: ${error.message}`);
+    }
+};
 
 // Function to scrape a single URL
 const scrapeWebsite = async (url) => {
@@ -64,6 +106,17 @@ const logPlayerData = (playerData) => {
 // Main function to run the script
 const main = async () => {
     try {
+        let apiData;
+
+        // Check if the local JSON file exists and is populated
+        if (checkLocalApiDataFile()) {
+            console.log('Using local API data.');
+            apiData = getLocalApiData(); // Use local data if file is populated
+        } else {
+            console.log('Fetching API data.');
+            apiData = await fetchAndStoreApiData(); // Fetch from API and store locally if no file or empty file
+        }
+
         const allScrapedData = await scrapeAllWebsites(urlsToScrape);
 
         if (allScrapedData && allScrapedData.length > 0) {
