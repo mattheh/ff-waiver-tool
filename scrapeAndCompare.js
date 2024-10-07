@@ -15,8 +15,12 @@ if (urlsToScrape.length === 0) {
 // Filepaths for storing the JSON data locally
 const localApiDataFilePath = path.join(__dirname, 'playersData.json');
 const availablePlayersFilePath = path.join(__dirname, 'availablePlayers.json');
+const playerValueFilePath = path.join(__dirname, 'playerValue.json');
 const apiUrl = 'https://api.sleeper.app/v1/players/nfl';
 const leagueRostersUrl = 'https://api.sleeper.app/v1/league/1049003724397465600/rosters';
+
+// Fantasy positions to exclude
+const excludedPositions = ["DB", "OL", "OT", "DL", "LB", "OL"];
 
 // Function to check if the local JSON file is populated
 const checkLocalApiDataFile = () => {
@@ -64,69 +68,89 @@ const fetchRosterData = async () => {
     }
 };
 
-// Function to find available players not on any rosters
+// Function to find available players not on any rosters and exclude unwanted positions
 const findAvailablePlayers = (allPlayers, rosteredPlayers) => {
     const availablePlayers = {};
 
     for (const playerId in allPlayers) {
-        // If the player ID is not on any roster, add it to availablePlayers
-        if (!rosteredPlayers.has(playerId)) {
-            availablePlayers[playerId] = allPlayers[playerId];
+        const player = allPlayers[playerId];
+        const playerPosition = player.fantasy_positions;
+
+        // Exclude players who are on a roster or have excluded fantasy positions
+        if (
+            !rosteredPlayers.has(playerId) && 
+            playerPosition && 
+            !playerPosition.some(pos => excludedPositions.includes(pos))
+        ) {
+            availablePlayers[playerId] = player;
         }
     }
 
     return availablePlayers;
 };
 
-// Function to scrape a single URL
+// Function to scrape a single URL and store player values
 const scrapeWebsite = async (url) => {
     try {
         const { data } = await axios.get(url);
         const $ = cheerio.load(data);
         
-        // Define an array to hold player data for this URL
-        let playerData = [];
+        // Define an array to hold player values for this URL
+        let playerValue = [];
 
-        // Assuming the table rows (tr) contain player names and PPR values
+        // Assuming the table rows (tr) contain player names at eq(1) and PPR values at eq(4)
         $('table tbody tr').each((index, element) => {
-            // Parse player name and PPR value from each row
-            const playerName = $(element).find('td').eq(1).text().trim();  // Adjust this selector based on actual structure
-            const pprValue = $(element).find('td').eq(4).text().trim();    // Adjust the index for the PPR value column
+            const playerName = $(element).find('td').eq(1).text().trim();  // Player name in eq(1)
+            const pprValue = $(element).find('td').eq(4).text().trim();    // PPR value in eq(4)
             
             // Push the player and PPR data into the array
             if (playerName && pprValue) {
-                playerData.push({
+                playerValue.push({
                     player: playerName,
-                    PPR: pprValue
+                    PPR: parseFloat(pprValue)  // Convert PPR to a number
                 });
             }
         });
 
-        return playerData;
+        return playerValue;
     } catch (error) {
         console.error(`Error scraping website ${url}: ${error.message}`);
         return []; // Return empty array if error occurs for a URL
     }
 };
 
-// Function to scrape all provided URLs
+// Function to scrape all provided URLs and store in playerValue
 const scrapeAllWebsites = async (urls) => {
-    let allPlayerData = [];
+    let playerValue = [];
 
     for (const url of urls) {
         console.log(`Scraping data from: ${url}`);
         const scrapedData = await scrapeWebsite(url);
 
         // Append the scraped data to the main JSON array
-        allPlayerData = allPlayerData.concat(scrapedData);
+        playerValue = playerValue.concat(scrapedData);
     }
 
-    return allPlayerData;
+    return playerValue;
 };
 
 // Function to log player data to console as JSON
 const logPlayerData = (playerData) => {
     console.log(JSON.stringify(playerData, null, 2));
+};
+
+// Function to find top 10 available players based on PPR values
+const findTopAvailablePlayers = (availablePlayers, playerValue) => {
+    // Filter playerValue array to only include players in availablePlayers
+    const filteredPlayerValues = playerValue.filter(pv => 
+        Object.values(availablePlayers).some(player => player.full_name === pv.player)
+    );
+
+    // Sort by PPR value in descending order
+    filteredPlayerValues.sort((a, b) => b.PPR - a.PPR);
+
+    // Return the top 10 players
+    return filteredPlayerValues.slice(0, 10);
 };
 
 // Main function to run the script
@@ -161,13 +185,18 @@ const main = async () => {
         console.log('Available players data has been saved to availablePlayers.json.');
 
         // Scrape provided URLs
-        const allScrapedData = await scrapeAllWebsites(urlsToScrape);
+        const playerValue = await scrapeAllWebsites(urlsToScrape);
 
-        if (allScrapedData && allScrapedData.length > 0) {
-            logPlayerData(allScrapedData);
-        } else {
-            console.log('No data found.');
-        }
+        // Save scraped player values to a JSON file
+        fs.writeFileSync(playerValueFilePath, JSON.stringify(playerValue, null, 2), 'utf-8');
+        console.log('Player values data has been saved to playerValue.json.');
+
+        // Find top 10 available players based on PPR values
+        const topAvailablePlayers = findTopAvailablePlayers(availablePlayers, playerValue);
+
+        console.log('Top 10 available players by PPR:');
+        logPlayerData(topAvailablePlayers);
+
     } catch (error) {
         console.error(`Error: ${error.message}`);
     }
